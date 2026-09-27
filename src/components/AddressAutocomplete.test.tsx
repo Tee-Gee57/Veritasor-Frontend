@@ -1,0 +1,144 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+
+import AddressAutocomplete, {
+    type AddressAutocompleteProps,
+    type AddressSuggestion,
+    type AddressValue,
+} from './AddressAutocomplete'
+
+describe('AddressAutocomplete', () => {
+    const sampleSuggestion: AddressSuggestion = {
+        id: '1',
+        label: '10 Downing St',
+        fullAddress: '10 Downing St, London SW1A 2AA, UK',
+        lat: 51.5034,
+        lng: -0.1276,
+    }
+
+    it('exposes the expected public contract types', () => {
+        const suggestion: AddressSuggestion = sampleSuggestion
+        const value: AddressValue = {
+            fullAddress: '10 Downing St, London SW1A 2AA, UK',
+            lat: sampleSuggestion.lat,
+            lng: sampleSuggestion.lng,
+            isManual: false,
+        }
+        const props: AddressAutocompleteProps = {
+            label: 'Business address',
+            placeholder: 'Start typing your address…',
+            value,
+            onChange: vi.fn(),
+            onClear: vi.fn(),
+            fetchSuggestions: async () => [suggestion],
+            required: true,
+            error: 'Address is required',
+        }
+
+        expectTypeOf(suggestion).toMatchTypeOf<AddressSuggestion>()
+        expectTypeOf(value).toMatchTypeOf<AddressValue>()
+        expectTypeOf(props).toMatchTypeOf<AddressAutocompleteProps>()
+    })
+
+    it('ignores overly short queries and keeps the list closed', async () => {
+        const fetchSuggestions = vi.fn(async () => [sampleSuggestion])
+
+        render(<AddressAutocomplete onChange={vi.fn()} fetchSuggestions={fetchSuggestions} />)
+
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.change(input, { target: { value: 'a' } })
+
+        await waitFor(() => {
+            expect(fetchSuggestions).not.toHaveBeenCalled()
+        })
+
+        expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    })
+
+    it('renders suggestions for valid input and resolves the selected value', async () => {
+        const onChange = vi.fn()
+        const fetchSuggestions = vi.fn(async (query: string) => {
+            if (query === 'downing') return [sampleSuggestion]
+            return []
+        })
+
+        render(<AddressAutocomplete onChange={onChange} fetchSuggestions={fetchSuggestions} />)
+
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.change(input, { target: { value: 'downing' } })
+
+        await waitFor(() => {
+            expect(fetchSuggestions).toHaveBeenCalledWith('downing')
+            expect(screen.getByRole('listbox')).toBeInTheDocument()
+        })
+
+        const option = screen.getByRole('option', { name: /10 downing st/i })
+        fireEvent.click(option)
+        expect(input).toHaveValue('10 Downing St, London SW1A 2AA, UK')
+    })
+
+    it('surfaces a deterministic failure state when suggestions cannot be loaded', async () => {
+        render(
+            <AddressAutocomplete
+                onChange={vi.fn()}
+                fetchSuggestions={async () => {
+                    throw new Error('network failure')
+                }}
+            />
+        )
+
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.change(input, { target: { value: 'berlin' } })
+
+        await waitFor(() => {
+            expect(screen.getByRole('status')).toHaveTextContent('Could not fetch suggestions')
+        })
+    })
+
+    it('toggles manual mode and saves a trimmed address without a map preview', () => {
+        const onChange = vi.fn()
+
+        render(<AddressAutocomplete onChange={onChange} />)
+
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.click(screen.getByRole('button', { name: /enter manually/i }))
+        fireEvent.change(input, { target: { value: '  123 Main St, Apt 4  ' } })
+
+        const form = document.querySelector('.addr-manual-form') as HTMLFormElement
+        fireEvent.submit(form)
+
+        expect(onChange).toHaveBeenCalledWith({
+            fullAddress: '123 Main St, Apt 4',
+            isManual: true,
+        })
+        expect(screen.getByText(/address saved: 123 main st, apt 4/i)).toBeInTheDocument()
+        expect(screen.queryByRole('img', { name: /map showing/i })).not.toBeInTheDocument()
+    })
+
+    it('clears the value and notifies the parent when the clear button is used', async () => {
+        const onClear = vi.fn()
+        const onChange = vi.fn()
+
+        render(
+            <AddressAutocomplete
+                onChange={onChange}
+                onClear={onClear}
+                fetchSuggestions={async () => []}
+                value={{ fullAddress: '10 Downing St, London SW1A 2AA, UK', isManual: false }}
+            />
+        )
+
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.change(input, { target: { value: 'downing' } })
+
+        await waitFor(() => {
+            expect(screen.getByRole('status')).toHaveTextContent('No suggestions found')
+        })
+
+        const clearButton = document.querySelector('.addr-clear-btn') as HTMLButtonElement
+        fireEvent.click(clearButton)
+
+        expect(onClear).toHaveBeenCalledTimes(1)
+        expect(input).toHaveValue('')
+        expect(screen.getByRole('status')).toHaveTextContent('Address cleared')
+    })
+})
