@@ -74,6 +74,67 @@ describe('AddressAutocomplete', () => {
         const option = screen.getByRole('option', { name: /10 downing st/i })
         fireEvent.click(option)
         expect(input).toHaveValue('10 Downing St, London SW1A 2AA, UK')
+        expect(onChange).toHaveBeenCalledWith({
+            fullAddress: sampleSuggestion.fullAddress,
+            lat: sampleSuggestion.lat,
+            lng: sampleSuggestion.lng,
+            isManual: false,
+        })
+        expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+        expect(screen.getByRole('status')).toHaveTextContent(`Selected: ${sampleSuggestion.fullAddress}`)
+    })
+
+    it('shows an empty result state when a valid query has no matches', async () => {
+        render(<AddressAutocomplete onChange={vi.fn()} fetchSuggestions={async () => []} />)
+
+        fireEvent.change(screen.getByRole('combobox', { name: /business address/i }), {
+            target: { value: 'unknown place' },
+        })
+
+        expect(await screen.findByRole('listbox')).toBeInTheDocument()
+        expect(screen.getByRole('option')).toHaveTextContent('No matching addresses found')
+        expect(screen.getByRole('status')).toHaveTextContent('No suggestions found')
+    })
+
+    it('selects the active suggestion with the keyboard and closes on Escape', async () => {
+        const secondSuggestion: AddressSuggestion = {
+            ...sampleSuggestion,
+            id: '2',
+            label: '11 Downing St',
+            fullAddress: '11 Downing St, London SW1A 2AA, UK',
+        }
+        const onChange = vi.fn()
+
+        render(
+            <AddressAutocomplete
+                onChange={onChange}
+                fetchSuggestions={async () => [sampleSuggestion, secondSuggestion]}
+            />
+        )
+
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.change(input, { target: { value: 'downing' } })
+
+        const listbox = await screen.findByRole('listbox')
+        fireEvent.keyDown(input, { key: 'ArrowDown' })
+        fireEvent.keyDown(input, { key: 'ArrowDown' })
+        expect(input).toHaveAttribute('aria-activedescendant', expect.stringContaining('item-1'))
+        fireEvent.keyDown(input, { key: 'ArrowUp' })
+        expect(input).toHaveAttribute('aria-activedescendant', expect.stringContaining('item-0'))
+        fireEvent.keyDown(input, { key: 'Enter' })
+
+        expect(onChange).toHaveBeenCalledWith({
+            fullAddress: sampleSuggestion.fullAddress,
+            lat: sampleSuggestion.lat,
+            lng: sampleSuggestion.lng,
+            isManual: false,
+        })
+        expect(listbox).not.toBeInTheDocument()
+
+        fireEvent.change(input, { target: { value: 'downing again' } })
+        expect(await screen.findByRole('listbox')).toBeInTheDocument()
+        fireEvent.keyDown(input, { key: 'Escape' })
+        expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
     })
 
     it('surfaces a deterministic failure state when suggestions cannot be loaded', async () => {
@@ -112,6 +173,36 @@ describe('AddressAutocomplete', () => {
         })
         expect(screen.getByText(/address saved: 123 main st, apt 4/i)).toBeInTheDocument()
         expect(screen.queryByRole('img', { name: /map showing/i })).not.toBeInTheDocument()
+    })
+
+    it('does not submit a blank manual address', () => {
+        const onChange = vi.fn()
+
+        render(<AddressAutocomplete onChange={onChange} />)
+
+        fireEvent.click(screen.getByRole('button', { name: /enter manually/i }))
+        fireEvent.change(screen.getByRole('combobox', { name: /business address/i }), {
+            target: { value: '   ' },
+        })
+
+        const saveButton = screen.getByRole('button', { name: /save address/i })
+        expect(saveButton).toBeDisabled()
+        fireEvent.submit(screen.getByRole('form', { name: /enter address manually/i }))
+        expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('exposes required and external validation state accessibly', () => {
+        render(
+            <AddressAutocomplete
+                onChange={vi.fn()}
+                required
+                error="Address is required"
+            />
+        )
+
+        expect(screen.getByRole('combobox', { name: /business address/i })).toHaveAttribute('aria-required', 'true')
+        expect(screen.getByRole('combobox', { name: /business address/i })).toHaveAttribute('aria-invalid', 'true')
+        expect(screen.getByRole('alert')).toHaveTextContent('Address is required')
     })
 
     it('clears the value and notifies the parent when the clear button is used', async () => {
