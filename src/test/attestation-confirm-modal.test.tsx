@@ -27,6 +27,16 @@ describe('AttestationConfirmModal', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
 
+    it('does not run backdrop behavior while closed', () => {
+      const onClose = vi.fn()
+      const { container } = renderWithRouter(
+        <AttestationConfirmModal open={false} onClose={onClose} onConfirm={vi.fn()} />,
+      )
+
+      expect(container.querySelector('.modal-backdrop')).toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+    })
+
     it('does not render the title when closed', () => {
       renderWithRouter(
         <AttestationConfirmModal open={false} onClose={vi.fn()} onConfirm={vi.fn()} />,
@@ -306,6 +316,108 @@ describe('AttestationConfirmModal', () => {
     })
   })
 
+  describe('handleBackdropClick branch (src/components/AttestationConfirmModal.tsx:89)', () => {
+    function ControlledModalWrapper({ initialLoading = false }: { initialLoading?: boolean }) {
+      const [open, setOpen] = useState(true)
+      const [loading, setLoading] = useState(initialLoading)
+
+      return (
+        <div>
+          <button type="button" onClick={() => setLoading(!loading)}>
+            Toggle Loading
+          </button>
+          <AttestationConfirmModal
+            open={open}
+            onClose={() => setOpen(false)}
+            onConfirm={vi.fn()}
+            isLoading={loading}
+            details={DEMO_DETAILS}
+          />
+        </div>
+      )
+    }
+
+    it('does not dismiss modal or trigger onClose when backdrop is clicked while isLoading is true', () => {
+      const onClose = vi.fn()
+      const { container } = renderWithRouter(
+        <AttestationConfirmModal open onClose={onClose} onConfirm={vi.fn()} isLoading={true} />,
+      )
+
+      const backdrop = container.querySelector('.modal-backdrop')
+      expect(backdrop).toBeInTheDocument()
+
+      fireEvent.click(backdrop!)
+
+      // Assert non-invocation of callback (failure to dismiss branch)
+      expect(onClose).not.toHaveBeenCalled()
+      // Assert visible outcome: dialog remains visible and in loading state
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /attesting/i })).toBeDisabled()
+      expect(screen.getByRole('button', { name: /^cancel$/i })).toBeDisabled()
+    })
+
+    it('preserves visible modal state in controlled consumer when backdrop is clicked during loading', () => {
+      const { container } = renderWithRouter(<ControlledModalWrapper initialLoading={true} />)
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      const backdrop = container.querySelector('.modal-backdrop')
+      fireEvent.click(backdrop!)
+
+      // Modal must remain open and visible in DOM
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+
+    it('triggers onClose and visibly dismisses modal when backdrop is clicked and isLoading is false', () => {
+      const onClose = vi.fn()
+      const { container } = renderWithRouter(
+        <AttestationConfirmModal open onClose={onClose} onConfirm={vi.fn()} isLoading={false} />,
+      )
+
+      const backdrop = container.querySelector('.modal-backdrop')
+      fireEvent.click(backdrop!)
+
+      expect(onClose).toHaveBeenCalledTimes(1)
+    })
+
+    it('visibly unmounts modal in controlled consumer when backdrop is clicked and not loading', () => {
+      const { container } = renderWithRouter(<ControlledModalWrapper initialLoading={false} />)
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      const backdrop = container.querySelector('.modal-backdrop')
+      fireEvent.click(backdrop!)
+
+      // Visible outcome: dialog is removed from the DOM
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('handles dynamic isLoading state transitions on backdrop click deterministically', () => {
+      const { container } = renderWithRouter(<ControlledModalWrapper initialLoading={true} />)
+
+      const backdrop = container.querySelector('.modal-backdrop')
+      // While loading, backdrop click should not close modal
+      fireEvent.click(backdrop!)
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+      // Toggle loading to false
+      fireEvent.click(screen.getByRole('button', { name: /toggle loading/i }))
+
+      // Now backdrop click should dismiss modal
+      fireEvent.click(backdrop!)
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('does not trigger handleBackdropClick when clicking inside modal dialog content', () => {
+      const onClose = vi.fn()
+      renderWithRouter(
+        <AttestationConfirmModal open onClose={onClose} onConfirm={vi.fn()} isLoading={false} />,
+      )
+
+      fireEvent.click(screen.getByRole('dialog'))
+      expect(onClose).not.toHaveBeenCalled()
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+  })
+
   describe('keyboard interactions', () => {
     it('Escape key calls onClose', () => {
       const onClose = vi.fn()
@@ -534,5 +646,114 @@ describe('Dashboard', () => {
 
     fireEvent.click(trigger)
     expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('closes modal when backdrop is clicked', () => {
+    const { container } = renderWithRouter(<Dashboard />)
+    const trigger = screen.getByRole('button', { name: /trigger monthly revenue report/i })
+
+    fireEvent.click(trigger)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    const backdrop = container.querySelector('.modal-backdrop')
+    expect(backdrop).toBeInTheDocument()
+    fireEvent.click(backdrop!)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+// ─── AttestationConfirmModal: focus-trap forward-wrap branch ──────────────────
+
+describe('AttestationConfirmModal — focus trap forward-wrap branch (line 78)', () => {
+  // AttestationConfirmModal.tsx:78 is:
+  //   } else if (!e.shiftKey && document.activeElement === last) {
+  //     e.preventDefault()
+  //     first.focus()
+  //   }
+  // The existing suite asserts the resulting focus move but never observes
+  // e.preventDefault(), which is the branch's actual side effect and is
+  // invisible in jsdom unless asserted directly. These cases pin the branch,
+  // its !shiftKey guard, and the single-focusable (loading) boundary.
+
+  function openModal(options: { isLoading?: boolean } = {}) {
+    const onClose = vi.fn()
+    renderWithRouter(
+      <AttestationConfirmModal
+        open
+        onClose={onClose}
+        onConfirm={vi.fn()}
+        details={DEMO_DETAILS}
+        isLoading={options.isLoading}
+      />,
+    )
+    const dialog = screen.getByRole('dialog')
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>('button:not([disabled])'),
+    )
+    return {
+      dialog,
+      focusable,
+      first: focusable[0],
+      last: focusable[focusable.length - 1],
+      onClose,
+    }
+  }
+
+  function pressTab(shiftKey: boolean) {
+    const event = new KeyboardEvent('keydown', {
+      key: 'Tab',
+      shiftKey,
+      bubbles: true,
+      cancelable: true,
+    })
+    document.dispatchEvent(event)
+    return event
+  }
+
+  it('wraps from the last control to the first AND prevents the default Tab', () => {
+    const { first, last } = openModal()
+    expect(first).toBeDefined()
+    expect(last).toBeDefined()
+    last!.focus()
+    expect(document.activeElement).toBe(last)
+
+    const event = pressTab(false)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(first)
+  })
+
+  it('does not hijack Shift+Tab from the last control (the !shiftKey guard)', () => {
+    const { last } = openModal()
+    last!.focus()
+
+    const event = pressTab(true)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(last)
+  })
+
+  it('keeps focus inside when loading leaves a single focusable control (first === last)', () => {
+    const { focusable } = openModal({ isLoading: true })
+    expect(focusable).toHaveLength(1)
+    const only = focusable[0]!
+    only.focus()
+
+    const event = pressTab(false)
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(only)
+  })
+
+  it('leaves the default Tab untouched from a non-boundary control', () => {
+    const { focusable } = openModal()
+    expect(focusable.length).toBeGreaterThanOrEqual(3)
+    const middle = focusable[1]!
+    middle.focus()
+
+    const event = pressTab(false)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(middle)
   })
 })
