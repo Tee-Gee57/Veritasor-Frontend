@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import AddressAutocomplete, {
     type AddressAutocompleteProps,
@@ -231,5 +231,108 @@ describe('AddressAutocomplete', () => {
         expect(onClear).toHaveBeenCalledTimes(1)
         expect(input).toHaveValue('')
         expect(screen.getByRole('status')).toHaveTextContent('Address cleared')
+    })
+})
+
+describe('AddressAutocomplete controlled value transitions', () => {
+    const suggestion: AddressSuggestion = {
+        id: 'controlled-1',
+        label: '10 Downing St',
+        fullAddress: '10 Downing St, London SW1A 2AA, UK',
+        lat: 51.5034,
+        lng: -0.1276,
+    }
+
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    it('starts in manual mode and suppresses autocomplete fetches while typing', async () => {
+        const fetchSuggestions = vi.fn(async () => [suggestion])
+
+        render(
+            <AddressAutocomplete
+                value={{ fullAddress: '', isManual: true }}
+                onChange={vi.fn()}
+                fetchSuggestions={fetchSuggestions}
+            />
+        )
+
+        expect(screen.getByRole('form', { name: /enter address manually/i })).toBeInTheDocument()
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.change(input, { target: { value: 'Downing' } })
+
+        await act(async () => {
+            vi.advanceTimersByTime(350)
+        })
+
+        expect(fetchSuggestions).not.toHaveBeenCalled()
+        expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    })
+
+    it('syncs manual mode from prop changes and re-enables fetching when disabled', async () => {
+        const fetchSuggestions = vi.fn(async () => [suggestion])
+        const onChange = vi.fn()
+        const { rerender } = render(
+            <AddressAutocomplete
+                value={{ fullAddress: '', isManual: false }}
+                onChange={onChange}
+                fetchSuggestions={fetchSuggestions}
+            />
+        )
+
+        rerender(
+            <AddressAutocomplete
+                value={{ fullAddress: '', isManual: true }}
+                onChange={onChange}
+                fetchSuggestions={fetchSuggestions}
+            />
+        )
+        expect(screen.getByRole('form', { name: /enter address manually/i })).toBeInTheDocument()
+
+        const input = screen.getByRole('combobox', { name: /business address/i })
+        fireEvent.change(input, { target: { value: 'Downing' } })
+        await act(async () => {
+            vi.advanceTimersByTime(350)
+        })
+        expect(fetchSuggestions).not.toHaveBeenCalled()
+
+        rerender(
+            <AddressAutocomplete
+                value={{ fullAddress: 'Downing', isManual: false }}
+                onChange={onChange}
+                fetchSuggestions={fetchSuggestions}
+            />
+        )
+        expect(screen.queryByRole('form', { name: /enter address manually/i })).not.toBeInTheDocument()
+
+        fireEvent.change(input, { target: { value: 'Downing Street' } })
+        await act(async () => {
+            vi.advanceTimersByTime(350)
+        })
+        await act(async () => {
+            await Promise.resolve()
+        })
+
+        expect(fetchSuggestions).toHaveBeenCalledWith('Downing Street')
+        expect(screen.getByRole('listbox')).toBeInTheDocument()
+    })
+
+    it('syncs the input text when the external address value changes', () => {
+        const { rerender } = render(
+            <AddressAutocomplete
+                value={{ fullAddress: 'Original address', isManual: false }}
+                onChange={vi.fn()}
+            />
+        )
+        const input = screen.getByRole('combobox', { name: /business address/i })
+
+        rerender(
+            <AddressAutocomplete
+                value={{ fullAddress: 'Updated address', isManual: false }}
+                onChange={vi.fn()}
+            />
+        )
+
+        expect(input).toHaveValue('Updated address')
     })
 })
